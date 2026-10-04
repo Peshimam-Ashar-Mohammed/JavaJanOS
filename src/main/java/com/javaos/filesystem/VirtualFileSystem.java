@@ -5,6 +5,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.DirectoryNotEmptyException;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 
 public final class VirtualFileSystem {
 
@@ -12,10 +18,13 @@ public final class VirtualFileSystem {
     private static final String RESET = "\u001B[0m";
 
     private final Path root;
+    private final Path realRoot;
     private Path currentDirectory;
 
     public VirtualFileSystem() throws IOException {
         root = Paths.get("env").toAbsolutePath().normalize();
+        Files.createDirectories(root);
+        realRoot = root.toRealPath();
         Files.createDirectories(root.resolve("home"));
         Files.createDirectories(root.resolve("etc"));
         Files.createDirectories(root.resolve("tmp"));
@@ -49,6 +58,178 @@ public final class VirtualFileSystem {
 
     public Path resolveForCommand(String input) {
         return resolvePath(input);
+    }
+
+    public void printTree(String input) throws IOException {
+        Path target = safeExistingPath(input);
+        if (!Files.isDirectory(target)) {
+            throw new IOException("Not a directory: " + input);
+        }
+        System.out.println(displayPath(target));
+        printTreeChildren(target, "");
+    }
+
+    private void printTreeChildren(Path directory, String prefix) throws IOException {
+        List<Path> children = safeChildren(directory);
+        for (int i = 0; i < children.size(); i++) {
+            Path child = children.get(i);
+            boolean last = i == children.size() - 1;
+            System.out.println(prefix + (last ? "└── " : "├── ") + child.getFileName()
+                    + (Files.isDirectory(child, java.nio.file.LinkOption.NOFOLLOW_LINKS) ? "/" : ""));
+            if (Files.isDirectory(child, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                printTreeChildren(child, prefix + (last ? "    " : "│   "));
+            }
+        }
+    }
+
+    public void copyFile(String sourceInput, String destinationInput) throws IOException {
+        Path source = safeExistingPath(sourceInput);
+        if (!Files.isRegularFile(source, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Source is not a regular file: " + sourceInput);
+        }
+        Path destination = destinationPath(destinationInput, source.getFileName().toString());
+        ensureDestinationParent(destination);
+        if (Files.exists(destination, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Destination already exists: " + destinationInput);
+        }
+        Files.copy(source, destination);
+        System.out.println("Copied " + sourceInput + " to " + destinationInput + ".");
+    }
+
+    public void move(String sourceInput, String destinationInput) throws IOException {
+        Path source = safeExistingPath(sourceInput);
+        if (source.equals(root)) {
+            throw new IOException("Cannot move the virtual root directory.");
+        }
+        if (source.equals(currentDirectory)) {
+            throw new IOException("Cannot move the current directory.");
+        }
+        Path destination = destinationPath(destinationInput, source.getFileName().toString());
+        ensureDestinationParent(destination);
+        if (Files.exists(destination, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Destination already exists: " + destinationInput);
+        }
+        if (Files.isDirectory(source, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                && destination.startsWith(source)) {
+            throw new IOException("Cannot move a directory into itself.");
+        }
+        Files.move(source, destination);
+        System.out.println("Moved " + sourceInput + " to " + destinationInput + ".");
+    }
+
+    public List<String> find(String input, String filename) throws IOException {
+        Path start = safeExistingPath(input);
+        if (!Files.isDirectory(start)) {
+            throw new IOException("Search path is not a directory: " + input);
+        }
+        List<String> matches = new ArrayList<>();
+        findChildren(start, filename, matches);
+        return matches;
+    }
+
+    private void findChildren(Path directory, String filename, List<String> matches) throws IOException {
+        for (Path child : safeChildren(directory)) {
+            if (child.getFileName().toString().equals(filename)) {
+                matches.add(displayPath(child));
+            }
+            if (Files.isDirectory(child, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                findChildren(child, filename, matches);
+            }
+        }
+    }
+
+    public long diskUsage(String input) throws IOException {
+        Path target = safeExistingPath(input);
+        return diskUsage(target, new HashSet<>());
+    }
+
+    private long diskUsage(Path path, Set<Path> visited) throws IOException {
+        if (Files.isSymbolicLink(path) || !visited.add(path.toRealPath())) {
+            return 0;
+        }
+        if (Files.isRegularFile(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            return Files.size(path);
+        }
+        if (!Files.isDirectory(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            return 0;
+        }
+        long total = 0;
+        for (Path child : safeChildren(path)) {
+            total += diskUsage(child, visited);
+        }
+        return total;
+    }
+
+    public String formatSize(long bytes) {
+        if (bytes < 1024) {
+            return bytes + " B";
+        }
+        if (bytes < 1024 * 1024) {
+            return String.format("%.1f KB", bytes / 1024.0);
+        }
+        if (bytes < 1024L * 1024 * 1024) {
+            return String.format("%.1f MB", bytes / (1024.0 * 1024));
+        }
+        return String.format("%.1f GB", bytes / (1024.0 * 1024 * 1024));
+    }
+
+    private Path safeExistingPath(String input) throws IOException {
+        Path target = resolvePath(input);
+        if (!Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Path does not exist: " + input);
+        }
+        if (Files.isSymbolicLink(target)) {
+            throw new IOException("Symbolic links are not supported: " + input);
+        }
+        if (!target.toRealPath().startsWith(realRoot)) {
+            throw new IOException("Access denied: Outside virtual filesystem.");
+        }
+        return target;
+    }
+
+    private Path destinationPath(String input, String sourceName) {
+        Path destination = resolvePath(input);
+        if (Files.isSymbolicLink(destination)) {
+            throw new IllegalArgumentException("Destination cannot be a symbolic link.");
+        }
+        if (Files.isDirectory(destination, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            destination = destination.resolve(sourceName);
+        }
+        return destination.normalize();
+    }
+
+    private void ensureDestinationParent(Path destination) throws IOException {
+        if (!destination.startsWith(root)) {
+            throw new IOException("Access denied: Outside virtual filesystem.");
+        }
+        Path parent = destination.getParent();
+        if (parent == null || !Files.isDirectory(parent, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Destination directory does not exist.");
+        }
+        if (!parent.toRealPath().startsWith(realRoot)) {
+            throw new IOException("Access denied: Outside virtual filesystem.");
+        }
+    }
+
+    private List<Path> safeChildren(Path directory) throws IOException {
+        List<Path> children = new ArrayList<>();
+        try (var stream = Files.list(directory)) {
+            stream.filter(path -> !Files.isSymbolicLink(path))
+                    .forEach(children::add);
+        } catch (SecurityException | DirectoryNotEmptyException e) {
+            throw new IOException("Cannot access directory: " + displayPath(directory), e);
+        }
+        children.sort(Comparator
+                .comparing((Path path) -> !Files.isDirectory(path, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+                .thenComparing(path -> path.getFileName().toString(), String.CASE_INSENSITIVE_ORDER));
+        return children;
+    }
+
+    private String displayPath(Path path) {
+        if (path.equals(root)) {
+            return "/";
+        }
+        return "/" + root.relativize(path).toString().replace("\\", "/");
     }
 
     public void makeDirectory(String name) throws IOException {
@@ -142,7 +323,8 @@ public final class VirtualFileSystem {
     }
 
 
-    public String loadFileContent(String name) throws IOException {
+   public String loadFileContent(String name) throws IOException {
+
         Path target = resolvePath(name);
 
         if (Files.exists(target) && !Files.isRegularFile(target)) {
@@ -157,6 +339,7 @@ public final class VirtualFileSystem {
     }
 
     public void saveFileContent(String name, String content) throws IOException {
+
         Path target = resolvePath(name);
 
         if (Files.isDirectory(target)) {
@@ -164,7 +347,6 @@ public final class VirtualFileSystem {
         }
 
         Files.writeString(target, content);
-    }
-
+}
 
 }

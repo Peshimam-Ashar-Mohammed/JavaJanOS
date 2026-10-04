@@ -14,8 +14,6 @@ import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 
 import com.javaos.editor.NanoEditor;
-import org.jline.reader.LineReader;
-import org.jline.terminal.Terminal;
 import com.javaos.commands.java.JavaCommands;
 
 import java.io.IOException;
@@ -39,7 +37,10 @@ public final class Shell {
     private final List<String> commandHistory = new ArrayList<>();
 
     public Shell() throws IOException {
-        terminal = TerminalBuilder.builder().system(true).build();
+        terminal = TerminalBuilder.builder()
+                .system(true)
+                .jansi(true)
+                .build();
         lineReader = LineReaderBuilder.builder().terminal(terminal).build();
         fileSystem = new VirtualFileSystem();
         registerCommands();
@@ -84,14 +85,22 @@ public final class Shell {
     }
 
     private void registerCommands() {
+
         FilesystemCommands.register(registry, fileSystem);
+
         SystemCommands.register(registry, commandHistory);
-        NetworkingCommands.register(registry, new NetworkService(new ProcessManager()));
+
+        NetworkingCommands.register(
+                registry,
+                new NetworkService(new ProcessManager())
+        );
+
         JavaCommands.register(registry, fileSystem);
 
         NanoEditor editor = new NanoEditor(fileSystem, terminal, lineReader);
 
         registry.register("nano", "Open the JavaOS text editor", arguments -> {
+
             if (arguments.isBlank()) {
                 System.out.println("Usage: nano <filename>");
                 return;
@@ -99,19 +108,20 @@ public final class Shell {
 
             editor.open(arguments.trim());
         });
-
-
     }
 
     private void printHelp() {
         System.out.println(WHITE + "Available commands" + RESET);
         printSection("SYSTEM COMMANDS", "date", "time", "whoami", "hostname", "uname", "uname -a", "arch", "sysinfo");
         printSection("FILE COMMANDS", "pwd", "ls", "cd <directory>", "mkdir <directory>", "touch <file>",
-                "cat <file>", "rm <file>", "rmdir <directory>", "echo <text> > <file>", "echo <text> >> <file>");
+                "cat <file>", "rm <file>", "rmdir <directory>", "tree [directory]",
+                "cp <source> <destination>", "mv <source> <destination>",
+                "find <directory> <filename>", "du [path]",
+                "echo <text> > <file>", "echo <text> >> <file>");
         printSection("NETWORK COMMANDS", "ip", "ip addr", "ping <host>", "nslookup <domain>", "curl <URL>",
                 "ip route", "netstat", "traceroute <host>", "tracert <host>", "portscan <host>");
         printSection("OTHER COMMANDS", "help", "history", "exit");
-        printSection("JAVA COMMANDS", "javac <filename.java>");
+        printSection("JAVA COMMANDS", "javac <filename.java>", "java <className>", "nano <filename>");
     }
 
     private void printSection(String title, String... names) {

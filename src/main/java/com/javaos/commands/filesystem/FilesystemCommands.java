@@ -4,6 +4,7 @@ import com.javaos.filesystem.VirtualFileSystem;
 import com.javaos.shell.CommandRegistry;
 
 import java.io.IOException;
+import java.util.List;
 
 public final class FilesystemCommands {
 
@@ -63,5 +64,61 @@ public final class FilesystemCommands {
                 System.out.println(arguments);
             }
         });
+        registry.register("tree", "Display a directory tree", arguments ->
+                runSafely(() -> fileSystem.printTree(arguments.isBlank() ? "." : arguments.trim())));
+        registry.register("cp", "Copy a file without overwriting", arguments ->
+                runWithOperands(arguments, "cp <source> <destination>",
+                        operands -> fileSystem.copyFile(operands.get(0), operands.get(1))));
+        registry.register("mv", "Move or rename without overwriting", arguments ->
+                runWithOperands(arguments, "mv <source> <destination>",
+                        operands -> fileSystem.move(operands.get(0), operands.get(1))));
+        registry.register("find", "Find matching filenames recursively", arguments ->
+                runWithOperands(arguments, "find <directory> <filename>",
+                        operands -> {
+                            List<String> matches = fileSystem.find(operands.get(0), operands.get(1));
+                            if (matches.isEmpty()) {
+                                System.out.println("No matches found.");
+                            } else {
+                                matches.forEach(System.out::println);
+                            }
+                        }));
+        registry.register("du", "Display file or directory size", arguments ->
+                runSafely(() -> {
+                    String path = arguments.isBlank() ? "." : arguments.trim();
+                    long bytes = fileSystem.diskUsage(path);
+                    System.out.println(fileSystem.formatSize(bytes) + "  " + path);
+                }));
+    }
+
+    private static void runWithOperands(String arguments, String usage,
+                                        OperandAction action) {
+        List<String> operands = parseOperands(arguments);
+        if (operands.size() != 2) {
+            System.out.println("Usage: " + usage);
+            return;
+        }
+        runSafely(() -> action.run(operands));
+    }
+
+    private static List<String> parseOperands(String arguments) {
+        return List.of(arguments.trim().split("\\s+", 2));
+    }
+
+    private static void runSafely(IoAction action) {
+        try {
+            action.run();
+        } catch (IOException | IllegalArgumentException e) {
+            System.out.println("Filesystem error: " + e.getMessage());
+        }
+    }
+
+    @FunctionalInterface
+    private interface IoAction {
+        void run() throws IOException;
+    }
+
+    @FunctionalInterface
+    private interface OperandAction {
+        void run(List<String> operands) throws IOException;
     }
 }
