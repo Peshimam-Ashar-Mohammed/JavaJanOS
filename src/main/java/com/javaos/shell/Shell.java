@@ -13,6 +13,11 @@ import org.jline.reader.UserInterruptException;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 
+import com.javaos.editor.NanoEditor;
+import org.jline.reader.LineReader;
+import org.jline.terminal.Terminal;
+import com.javaos.commands.java.JavaCommands;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -82,6 +87,20 @@ public final class Shell {
         FilesystemCommands.register(registry, fileSystem);
         SystemCommands.register(registry, commandHistory);
         NetworkingCommands.register(registry, new NetworkService(new ProcessManager()));
+        JavaCommands.register(registry, fileSystem);
+
+        NanoEditor editor = new NanoEditor(fileSystem, terminal, lineReader);
+
+        registry.register("nano", "Open the JavaOS text editor", arguments -> {
+            if (arguments.isBlank()) {
+                System.out.println("Usage: nano <filename>");
+                return;
+            }
+
+            editor.open(arguments.trim());
+        });
+
+
     }
 
     private void printHelp() {
@@ -92,6 +111,7 @@ public final class Shell {
         printSection("NETWORK COMMANDS", "ip", "ip addr", "ping <host>", "nslookup <domain>", "curl <URL>",
                 "ip route", "netstat", "traceroute <host>", "tracert <host>", "portscan <host>");
         printSection("OTHER COMMANDS", "help", "history", "exit");
+        printSection("JAVA COMMANDS", "javac <filename.java>");
     }
 
     private void printSection(String title, String... names) {

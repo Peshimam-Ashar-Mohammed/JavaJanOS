@@ -36,7 +36,7 @@ public final class VirtualFileSystem {
         }
     }
 
-    private Path resolvePath(String input) {
+    public Path resolvePath(String input) {
         Path target = input.startsWith("/")
                 ? root.resolve(input.substring(1))
                 : currentDirectory.resolve(input);
@@ -45,6 +45,10 @@ public final class VirtualFileSystem {
             throw new IllegalArgumentException("Access denied: Outside virtual filesystem.");
         }
         return target;
+    }
+
+    public Path resolveForCommand(String input) {
+        return resolvePath(input);
     }
 
     public void makeDirectory(String name) throws IOException {
@@ -136,4 +140,31 @@ public final class VirtualFileSystem {
             }
         }
     }
+
+
+    public String loadFileContent(String name) throws IOException {
+        Path target = resolvePath(name);
+
+        if (Files.exists(target) && !Files.isRegularFile(target)) {
+            throw new IOException("Not a regular file: " + name);
+        }
+
+        if (!Files.exists(target)) {
+            return "";
+        }
+
+        return Files.readString(target);
+    }
+
+    public void saveFileContent(String name, String content) throws IOException {
+        Path target = resolvePath(name);
+
+        if (Files.isDirectory(target)) {
+            throw new IOException("Cannot save to a directory.");
+        }
+
+        Files.writeString(target, content);
+    }
+
+
 }
